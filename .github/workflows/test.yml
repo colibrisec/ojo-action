@@ -1,0 +1,20 @@
+name: test
+on: [push, pull_request]
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash test/test_scan.sh
+  self-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          sarif: 'false'
+          pr-comment: 'false'
+          create-issues: 'false'
+          tracker: 'none'

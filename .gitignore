@@ -1,0 +1,9 @@
+.semgrep/
+
+ojo-report.json
+ojo-image-report.json
+ojo.sarif
+ojo-image.sarif
+ojo-sbom.cdx.json
+ojo-summary.md
+ojo-summary.md.full
