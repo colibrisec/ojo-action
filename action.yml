@@ -1,4 +1,4 @@
-name: 'ojo scan'
+name: 'ojo scanner'
 description: 'Run ojo (dependency, secret, IaC, SAST scans) and report findings via SARIF, issues, or PR comments'
 branding:
   icon: 'shield'
