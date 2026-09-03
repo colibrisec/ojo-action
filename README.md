@@ -1,5 +1,9 @@
 # ojo-action
 
+[![Marketplace](https://img.shields.io/badge/marketplace-ojo%20scan-blue?logo=github)](https://github.com/marketplace/actions/ojo-scan)
+[![Release](https://img.shields.io/github/v/release/colibrisec/ojo-action?sort=semver)](https://github.com/colibrisec/ojo-action/releases/latest)
+[![test](https://github.com/colibrisec/ojo-action/actions/workflows/test.yml/badge.svg)](https://github.com/colibrisec/ojo-action/actions/workflows/test.yml)
+
 GitHub Action that runs [ojo](https://github.com/colibrisec/ojo) (dependency, secret,
 IaC, SAST, and code-quality scanning) and reports findings the GitHub-native way:
 SARIF upload to code scanning, a PR summary comment, and optionally one issue per
