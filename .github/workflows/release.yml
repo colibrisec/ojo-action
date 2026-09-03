@@ -1,0 +1,51 @@
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 1.2.3 (no leading v)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+      - name: Publish an immutable release and move the major tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${VERSION_INPUT#v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "version must be X.Y.Z (got '$VERSION_INPUT')" >&2
+            exit 1
+          }
+          tag="v$version"
+          major="v${version%%.*}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # gh release create both tags $GITHUB_SHA and publishes the
+          # release in one step via the Releases API. Pre-creating the tag
+          # ourselves with a raw `git push` (the previous approach) was
+          # rejected -- "Cannot create ref due to creations being
+          # restricted" -- with no ruleset configured anywhere to explain
+          # it, so this looks like immutable releases' own behavior: a
+          # release-bound tag is only allowed to come into existence
+          # together with its Release, not staged ahead of it.
+          gh release create "$tag" --title "$tag" --target "$GITHUB_SHA" --generate-notes
+
+          # The major tag (e.g. v1) has no Release of its own, so it's a
+          # plain, movable ref -- stays movable so `uses:
+          # .../ojo-action@v1` keeps tracking the latest compatible
+          # release, same convention as actions/checkout etc.
+          git tag -f "$major"
+          git push -f origin "$major"

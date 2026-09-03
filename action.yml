@@ -1,0 +1,157 @@
+name: 'ojo scan'
+description: 'Run ojo (dependency, secret, IaC, SAST scans) and report findings via SARIF, issues, PR comments, or Balam'
+branding:
+  icon: 'shield'
+  color: 'red'
+
+inputs:
+  # --- what to scan ---
+  vulnerabilities:
+    description: 'Scan for dependency vulnerabilities (ojo scanner: vuln)'
+    default: 'true'
+  secrets:
+    description: 'Scan for hardcoded secrets (ojo scanner: secret)'
+    default: 'true'
+  iac:
+    description: 'Scan IaC for misconfiguration (ojo scanner: misconfig)'
+    default: 'true'
+  sast:
+    description: 'Run static application security testing (ojo scanner: sast)'
+    default: 'true'
+  quality:
+    description: 'Run code-quality/maintainability scan (ojo scanner: quality)'
+    default: 'false'
+  sbom:
+    description: 'Generate a CycloneDX SBOM (ojo -f sbom). Published as a workflow artifact only -- not uploaded to code scanning or Balam.'
+    default: 'false'
+  ojo-version:
+    description: 'Tag of the ghcr.io/colibrisec/ojo image to run'
+    default: 'latest'
+  path:
+    description: 'Path to scan, relative to the repo root'
+    default: '.'
+  image:
+    description: 'Container image ref to scan for vulnerable OS packages (ojo image, e.g. myregistry/app:latest). Leave empty to skip.'
+    default: ''
+
+  # --- GitHub reporting ---
+  sarif:
+    description: 'Upload results as SARIF to GitHub code scanning. Requires security-events: write and (for private repos) GitHub Advanced Security.'
+    default: 'true'
+  pr-comment:
+    description: 'On pull_request/pull_request_target events, post (and keep updated) a summary comment on the PR. Requires pull-requests: write.'
+    default: 'true'
+  create-issues:
+    description: 'Open a GitHub issue per finding (deduped by a marker in the issue body against open+closed issues). Requires issues: write. Skipped on pull_request events to avoid per-branch issue spam — use a push/schedule trigger.'
+    default: 'false'
+  issue-labels:
+    description: 'Comma-separated labels applied to issues created by create-issues. Labels must already exist in the repo (gh issue create fails otherwise) -- empty (default) applies none.'
+    default: ''
+  max-issues:
+    description: 'Cap on issues created per run, so a large first scan does not flood the tracker'
+    default: '25'
+  token:
+    description: 'GitHub token used for the PR comment and issue creation'
+    default: ${{ github.token }}
+
+  # --- Balam (optional; for private repos without GitHub Advanced Security) ---
+  tracker:
+    description: "Also upload findings to a vulnerability tracker: 'balam' or 'none'"
+    default: 'none'
+  balam-url:
+    description: 'Balam base URL (required when tracker is balam)'
+    default: ''
+  balam-token:
+    description: 'Balam personal API token (required when tracker is balam)'
+    default: ''
+  product-name:
+    description: 'Balam product name (or use product-id)'
+    default: ''
+  engagement-name:
+    description: 'Balam engagement name (or use engagement-id)'
+    default: ''
+  product-id:
+    description: 'Balam product UUID, alternative to product-name'
+    default: ''
+  engagement-id:
+    description: 'Balam engagement UUID, alternative to engagement-name'
+    default: ''
+  product-type-name:
+    description: 'Balam product type name (optional)'
+    default: ''
+  test-title:
+    description: 'Balam test title (optional)'
+    default: ''
+
+  # --- misc ---
+  fail-on-findings:
+    description: 'Fail the job when ojo finds anything, after reporting is done. Default just reports.'
+    default: 'false'
+  upload-artifact:
+    description: 'Also publish the raw ojo report(s) as a workflow artifact'
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run ojo and report findings
+      shell: bash
+      run: bash "${{ github.action_path }}/scan.sh"
+      env:
+        VULNERABILITIES: ${{ inputs.vulnerabilities }}
+        SECRETS: ${{ inputs.secrets }}
+        IAC: ${{ inputs.iac }}
+        SAST: ${{ inputs.sast }}
+        QUALITY: ${{ inputs.quality }}
+        SBOM: ${{ inputs.sbom }}
+        OJO_VERSION: ${{ inputs.ojo-version }}
+        SCAN_PATH: ${{ inputs.path }}
+        IMAGE: ${{ inputs.image }}
+        SARIF: ${{ inputs.sarif }}
+        PR_COMMENT: ${{ inputs.pr-comment }}
+        CREATE_ISSUES: ${{ inputs.create-issues }}
+        ISSUE_LABELS: ${{ inputs.issue-labels }}
+        MAX_ISSUES: ${{ inputs.max-issues }}
+        GH_TOKEN: ${{ inputs.token }}
+        TRACKER: ${{ inputs.tracker }}
+        BALAM_URL: ${{ inputs.balam-url }}
+        BALAM_TOKEN: ${{ inputs.balam-token }}
+        PRODUCT_NAME: ${{ inputs.product-name }}
+        ENGAGEMENT_NAME: ${{ inputs.engagement-name }}
+        PRODUCT_ID: ${{ inputs.product-id }}
+        ENGAGEMENT_ID: ${{ inputs.engagement-id }}
+        PRODUCT_TYPE_NAME: ${{ inputs.product-type-name }}
+        TEST_TITLE: ${{ inputs.test-title }}
+        FAIL_ON_FINDINGS: ${{ inputs.fail-on-findings }}
+    - name: Upload fs SARIF to code scanning
+      if: ${{ always() && inputs.sarif == 'true' && hashFiles('ojo.sarif') != '' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ojo.sarif
+        category: ojo-fs
+    - name: Upload image SARIF to code scanning
+      if: ${{ always() && inputs.sarif == 'true' && hashFiles('ojo-image.sarif') != '' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ojo-image.sarif
+        category: ojo-image
+    - name: Upload ojo reports as workflow artifact
+      if: ${{ always() && inputs.upload-artifact == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ojo-reports
+        path: |
+          ojo-report.json
+          ojo-image-report.json
+          ojo.sarif
+          ojo-image.sarif
+          ojo-sbom.cdx.json
+        if-no-files-found: ignore
+    - name: Fail on findings
+      if: ${{ always() && inputs.fail-on-findings == 'true' }}
+      shell: bash
+      run: |
+        if [ "${OJO_FOUND:-}" = "true" ]; then
+          echo "ojo found issues (see summary above)" >&2
+          exit 1
+        fi
