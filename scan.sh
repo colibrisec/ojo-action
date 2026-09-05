@@ -44,6 +44,18 @@ jq_count() {
   echo "$total"
 }
 
+# sev_emoji SEVERITY -> a colored circle so severity reads at a glance in a
+# markdown table (no other color is available in a PR comment).
+sev_emoji() {
+  case "$1" in
+    CRITICAL) echo "🔴" ;;
+    HIGH) echo "🟠" ;;
+    MEDIUM) echo "🟡" ;;
+    LOW) echo "🟢" ;;
+    *) echo "⚪" ;;
+  esac
+}
+
 write_summary() {
   local out="$1"
   shift
@@ -69,7 +81,7 @@ write_summary() {
           '([.findings[]?.Vulns[]? | select(.Severity==$s)] | length) + ([.issues[]? | select(.Severity==$s)] | length)' \
           "$f")))
       done
-      [ "$c" -gt 0 ] && echo "| $sev | $c |"
+      [ "$c" -gt 0 ] && echo "| $(sev_emoji "$sev") $sev | $c |"
     done
     echo
     echo "<details><summary>Details ($total)</summary>"
@@ -77,15 +89,39 @@ write_summary() {
     echo "| Type | Severity | ID/Rule | Location | Description |"
     echo "|---|---|---|---|---|"
     local rows=0 max_rows=50
-    for f in "${reports[@]}"; do
-      [ -n "$f" ] && [ -s "$f" ] || continue
-      jq -r '.findings[]? | .Package as $p | .Vulns[]? |
-        "| vuln | \(.Severity) | \(.ID) | \($p.Name)@\($p.Version) | " +
-        (.Summary | gsub("\\s+";" ") | gsub("\\|";"\\|")) + " |"' "$f"
-      jq -r '.issues[]? |
-        "| \(.Scanner) | \(.Severity) | \(.RuleID) | \(.File):\(.Line) | " +
-        (.Message | gsub("\\s+";" ") | gsub("\\|";"\\|")) + " |"' "$f"
-    done | { rows=0; while IFS= read -r line; do
+    # Each line is prefixed with a numeric severity rank + a tab, sorted
+    # below, then stripped -- gsub("\\s+";" ") on the free-text fields
+    # already collapses any literal tabs in the source data, so the
+    # rank/line split can't be confused by real content.
+    {
+      for f in "${reports[@]}"; do
+        [ -n "$f" ] && [ -s "$f" ] || continue
+        jq -r '
+          def sev_emoji:
+            if . == "CRITICAL" then "🔴"
+            elif . == "HIGH" then "🟠"
+            elif . == "MEDIUM" then "🟡"
+            elif . == "LOW" then "🟢"
+            else "⚪" end;
+          def sev_rank: {CRITICAL:0,HIGH:1,MEDIUM:2,LOW:3,UNKNOWN:4}[.] // 5;
+          .findings[]? | .Package as $p | .Vulns[]? |
+          "\(.Severity | sev_rank)\t| vuln | \(.Severity | sev_emoji) \(.Severity) | \(.ID) | " +
+          "\($p.Name)@\($p.Version) | " +
+          (.Summary | gsub("\\s+";" ") | gsub("\\|";"\\|")) + " |"' "$f"
+        jq -r '
+          def sev_emoji:
+            if . == "CRITICAL" then "🔴"
+            elif . == "HIGH" then "🟠"
+            elif . == "MEDIUM" then "🟡"
+            elif . == "LOW" then "🟢"
+            else "⚪" end;
+          def sev_rank: {CRITICAL:0,HIGH:1,MEDIUM:2,LOW:3,UNKNOWN:4}[.] // 5;
+          .issues[]? |
+          "\(.Severity | sev_rank)\t| \(.Scanner) | \(.Severity | sev_emoji) \(.Severity) | \(.RuleID) | " +
+          "\(.File):\(.Line) | " +
+          (.Message | gsub("\\s+";" ") | gsub("\\|";"\\|")) + " |"' "$f"
+      done
+    } | sort -s -t $'\t' -k1,1n | cut -f2- | { rows=0; while IFS= read -r line; do
         rows=$((rows + 1))
         [ "$rows" -le "$max_rows" ] && echo "$line"
       done
@@ -113,10 +149,12 @@ post_pr_comment() {
   existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$pr_number/comments" --paginate \
     -q "[.[] | select(.body | startswith(\"<!-- $MARKER -->\"))][-1].id" 2>/dev/null || true)
 
+  # -F (not -f): only --field reads an "@file" value from disk. --raw-field
+  # would send the literal string "@$full" as the comment body.
   if [ -n "$existing" ] && [ "$existing" != "null" ]; then
-    gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/$pr_number/comments/$existing" -f body=@"$full" > /dev/null
+    gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/$pr_number/comments/$existing" -F body=@"$full" > /dev/null
   else
-    gh api "repos/$GITHUB_REPOSITORY/issues/$pr_number/comments" -f body=@"$full" > /dev/null
+    gh api "repos/$GITHUB_REPOSITORY/issues/$pr_number/comments" -F body=@"$full" > /dev/null
   fi
 }
 
